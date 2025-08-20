@@ -1,0 +1,12 @@
+[package]
+name = "vanity"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eyre = { workspace = true }
+hex = { workspace = true }
+rayon = { workspace = true }
+regex = { workspace = true }
+sui-keys = { workspace = true }
+sui-types = { workspace = true }

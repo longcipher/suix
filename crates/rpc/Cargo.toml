@@ -1,0 +1,9 @@
+[package]
+name = "rpc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eyre = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
