@@ -1,19 +1,23 @@
 # Suix - Comprehensive Sui CLI Tool
 
-A high-performance, multi-purpose CLI tool for Sui blockchain operations, including vanity address generation and JSON-RPC interactions.
+A high-performance, multi-purpose CLI tool for Sui blockchain operations, featuring vanity address generation, JSON-RPC calls, and native gRPC support with real-time streaming capabilities.
 
 ## ✨ Features
 
-- 🏗️ **Multi-Command Architecture**: Three main operation modes
+- 🏗️ **Multi-Command Architecture**: Five main operation modes
   - `suix vanity` - Generate custom Sui vanity addresses  
-  - `suix rpc` - Direct Sui JSON-RPC calls
-  - `suix query` - Quick access to common blockchain queries
+  - `suix json-rpc` - Direct Sui JSON-RPC calls
+  - `suix json-rpc-quick` - Quick access to common JSON-RPC methods
+  - `suix grpc` - Raw gRPC calls (buf curl-like interface)
+  - `suix grpc-quick` - Native gRPC client with real-time streaming
 
 - 🚀 **High Performance**: Multi-threaded vanity address generation using Rayon
 - 🎯 **Flexible Patterns**: Support for hexspeak conversion, hex patterns, and regex
-- 🔐 **Official Sui Integration**: Uses `sui-keys` and `sui-types` for authentic address generation
-- 🌐 **Blockchain Operations**: Complete RPC client for Sui network interactions
-- ⚡ **Modern Rust**: Built with latest Rust ecosystem and workspace dependencies
+- 🔐 **Official Sui Integration**: Uses `sui-keys`, `sui-types`, and `sui-rpc-api` for authentic operations
+- 🌐 **Dual Protocol Support**: Both JSON-RPC and native gRPC protocols
+- ⚡ **Real-time Streaming**: Live checkpoint subscription via gRPC
+- 📊 **Pipeline Ready**: JSON output mode for automation and processing
+- 🛠️ **Modern Rust**: Built with latest Rust ecosystem and workspace dependencies
 
 ## 📦 Installation
 
@@ -33,10 +37,12 @@ The binary will be available at `./target/release/suix`.
 suix <COMMAND>
 
 Commands:
-  vanity  Generate Sui vanity addresses
-  rpc     Make Sui JSON-RPC calls  
-  query   Quick access to common RPC methods
-  help    Print help information
+  vanity          Generate Sui vanity addresses
+  json-rpc        Make Sui JSON-RPC calls
+  grpc            Make raw gRPC calls (buf curl-like interface)
+  json-rpc-quick  Quick access to common JSON-RPC methods
+  grpc-quick      Quick access to common gRPC methods (using sui-rpc-api)
+  help            Print help information
 ```
 
 ## 💎 Vanity Address Generation
@@ -121,16 +127,16 @@ Direct access to Sui blockchain via JSON-RPC.
 
 ```bash
 # Generic RPC call
-./suix rpc <METHOD> [PARAMS] [OPTIONS]
+./suix json-rpc <METHOD> [PARAMS] [OPTIONS]
 
 # Get chain identifier
-./suix rpc sui_getChainIdentifier
+./suix json-rpc sui_getChainIdentifier
 
 # Get latest checkpoint with pretty printing
-./suix rpc sui_getLatestCheckpointSequenceNumber --pretty
+./suix json-rpc sui_getLatestCheckpointSequenceNumber --pretty
 
 # Get object information
-./suix rpc sui_getObject '["0x123..."]' --pretty
+./suix json-rpc sui_getObject '["0x123..."]' --pretty
 ```
 
 ### RPC Options
@@ -141,44 +147,100 @@ Options:
   -p, --pretty     Pretty print JSON response
 ```
 
-## ⚡ Quick Query Commands
+## ⚡ Quick JSON-RPC Commands
 
-Shortcuts for common blockchain queries.
+Shortcuts for common blockchain queries via JSON-RPC.
 
 ```bash
 # Get chain identifier
-./suix query chain [--pretty]
+./suix json-rpc-quick chain [--pretty]
 
 # Get latest checkpoint
-./suix query checkpoint [--pretty]
+./suix json-rpc-quick checkpoint [--pretty]
 
 # Get object by ID
-./suix query object <OBJECT_ID> [--pretty]
+./suix json-rpc-quick object <OBJECT_ID> [--pretty]
 
 # Get transaction by digest  
-./suix query tx <DIGEST> [--pretty]
+./suix json-rpc-quick tx <DIGEST> [--pretty]
 
 # Get account balance
-./suix query balance <ADDRESS> [--coin-type <TYPE>] [--pretty]
+./suix json-rpc-quick balance <ADDRESS> [--pretty]
 ```
 
-### Query Examples
+### JSON-RPC Quick Examples
 
 ```bash
 # Quick chain info
-./suix query chain --pretty
+./suix json-rpc-quick chain --pretty
 
 # Latest checkpoint
-./suix query checkpoint
+./suix json-rpc-quick checkpoint
 
 # Object details
-./suix query object 0x123... --pretty
+./suix json-rpc-quick object 0x123... --pretty
 
 # Account balance
-./suix query balance 0xabc... --pretty
+./suix json-rpc-quick balance 0xabc... --pretty
+```
 
-# Specific coin balance
-./suix query balance 0xdef... --coin-type "0x2::sui::SUI"
+## 🚀 Native gRPC Operations
+
+High-performance native gRPC calls using sui-rpc-api client.
+
+### Basic gRPC Calls
+
+```bash
+# Get service information (latest checkpoint)
+./suix grpc-quick info [--pretty] [--json]
+
+# Get object by ID
+./suix grpc-quick object <OBJECT_ID> [--pretty] [--json]
+
+# Get transaction by digest
+./suix grpc-quick tx <DIGEST> [--pretty] [--json]
+
+# Get full checkpoint data
+./suix grpc-quick full-checkpoint <SEQUENCE> [--pretty] [--json]
+
+# List available gRPC methods
+./suix grpc-quick list-methods
+```
+
+### Real-time Streaming
+
+```bash
+# Subscribe to checkpoint stream (real-time)
+./suix grpc-quick subscribe --stream [--interval 5] [--json]
+
+# Example streaming with custom interval
+./suix grpc-quick subscribe --stream --interval 3 --json
+
+# Subscribe and save to file for processing
+./suix grpc-quick subscribe --stream --json > checkpoints.jsonl
+```
+
+### Raw gRPC Interface
+
+```bash
+# Raw gRPC call (buf curl-like)
+./suix grpc-quick curl <SERVICE> <METHOD> [DATA]
+
+# Examples
+./suix grpc-quick curl sui.rpc.v2beta2.LedgerService GetLatestCheckpoint
+./suix grpc-quick curl sui.rpc.v2beta2.LedgerService GetCheckpoint '{"sequence_number": 12345}'
+```
+
+### gRPC Options
+
+```bash
+Options:
+  --url <URL>           gRPC endpoint [default: https://fullnode.mainnet.sui.io:443]
+  -p, --pretty          Pretty print the response
+  -j, --json            Output only JSON for pipeline processing
+  -s, --stream          Enable continuous streaming mode
+  --interval <SECONDS>  Polling interval for streaming [default: 5]
+  --timeout <SECONDS>   Request timeout [default: 30]
 ```
 
 ## 🏗️ Project Structure
@@ -187,7 +249,8 @@ Shortcuts for common blockchain queries.
 suix/
 ├── bin/suix/          # Main CLI application
 ├── crates/vanity/     # Vanity address generation
-├── crates/rpc/        # RPC client functionality  
+├── crates/rpc/        # JSON-RPC client functionality  
+├── crates/grpc/       # Native gRPC client with streaming
 └── Cargo.toml         # Workspace configuration
 ```
 
@@ -216,17 +279,46 @@ suix/
 ./suix vanity --starts-with de1 -n 5
 ```
 
-### Blockchain Operations
+### JSON-RPC Operations
 
 ```bash
 # Monitor latest activity
-./suix query checkpoint --pretty
+./suix json-rpc-quick checkpoint --pretty
 
 # Check specific transaction
-./suix query tx 0x123...abc --pretty
+./suix json-rpc-quick tx 0x123...abc --pretty
 
 # Verify account balance
-./suix query balance 0xabc...def --pretty
+./suix json-rpc-quick balance 0xabc...def --pretty
+```
+
+### Native gRPC Operations
+
+```bash
+# Real-time checkpoint monitoring
+./suix grpc-quick subscribe --stream --interval 3 --json
+
+# Get detailed checkpoint data
+./suix grpc-quick full-checkpoint 12345 --pretty
+
+# Pipeline processing example
+./suix grpc-quick subscribe --stream --json | jq '.sequence_number'
+
+# Service connectivity test
+./suix grpc-quick info --json
+```
+
+### Advanced Pipeline Examples
+
+```bash
+# Monitor new checkpoints and extract sequence numbers
+./suix grpc-quick subscribe --stream --json | jq -r '.sequence_number'
+
+# Get checkpoint info and format timestamp
+./suix grpc-quick info --json | jq -r '.timestamp_ms | tonumber / 1000 | todate'
+
+# Batch process multiple objects
+echo '0x123 0x456 0x789' | xargs -n1 ./suix grpc-quick object --json
 ```
 
 ## 🔧 Performance Tips
@@ -234,7 +326,53 @@ suix/
 1. **Optimal Threading**: Use `-j` equal to CPU cores for vanity generation
 2. **Batch Tuning**: Increase `--addresses-per-round` for less frequent updates
 3. **Pattern Complexity**: Simpler patterns generate faster
-4. **Network Endpoints**: Use local/faster RPC endpoints for better response times
+4. **Protocol Choice**: Use gRPC for better performance and real-time features
+5. **Network Endpoints**: Use local/faster RPC endpoints for better response times
+6. **Streaming Intervals**: Adjust `--interval` based on your monitoring needs
+7. **Pipeline Processing**: Use `--json` flag for automated processing workflows
+
+## 🌟 Key Features Explained
+
+### Dual Protocol Support
+
+Suix supports both JSON-RPC and native gRPC protocols:
+
+- **JSON-RPC**: Traditional HTTP-based calls, compatible with all Sui nodes
+- **gRPC**: High-performance binary protocol with streaming capabilities
+
+### Live Streaming Capabilities
+
+The gRPC client supports real-time checkpoint streaming:
+
+```bash
+# Continuous monitoring
+./suix grpc-quick subscribe --stream --interval 5
+
+# Pipeline-ready output
+./suix grpc-quick subscribe --stream --json | jq '.'
+```
+
+### JSON Output Mode
+
+gRPC commands support `--json` flag for pipeline processing:
+
+```bash
+# Machine-readable output  
+./suix grpc-quick info --json
+./suix grpc-quick subscribe --stream --json
+
+# JSON-RPC commands output JSON by default (use --pretty for formatting)
+./suix json-rpc-quick chain
+./suix json-rpc-quick checkpoint --pretty
+```
+
+### Workspace Architecture
+
+The project uses Cargo workspace for optimal dependency management:
+
+- Shared dependencies across all crates
+- Version inheritance from root workspace
+- Feature-based compilation for minimal binary size
 
 ## 🛡️ Security & Safety
 
@@ -243,6 +381,27 @@ suix/
 - ✅ No network communication for vanity generation
 - ✅ Proper file permissions for saved keys
 - ✅ Type-safe Rust implementation
+
+## 🚀 Recent Updates
+
+### v0.1.0 - Enhanced gRPC Support
+
+- ✨ **Native gRPC Client**: Added `sui-rpc-api` integration for authentic gRPC calls
+- 🔄 **Real-time Streaming**: Live checkpoint subscription with customizable intervals
+- 📊 **Pipeline Support**: JSON output mode for automation workflows
+- 🏗️ **Workspace Restructure**: Optimized Cargo workspace with proper dependency inheritance
+- 🛠️ **Code Quality**: Full clippy compliance and modern Rust patterns
+- 📡 **Dual Protocol**: Both JSON-RPC and gRPC support for maximum compatibility
+
+### Protocol Comparison
+
+| Feature | JSON-RPC | gRPC |
+|---------|----------|------|
+| Compatibility | ✅ Universal | ✅ Native Sui |
+| Performance | ⚡ Good | ⚡⚡ Excellent |
+| Streaming | ❌ No | ✅ Yes |
+| Binary Size | 📦 Smaller | 📦 Larger |
+| Use Case | Scripts/Tools | Real-time Apps |
 
 ## 🤝 Contributing
 

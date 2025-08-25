@@ -4,9 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-clap = { workspace = true }
-color-eyre = { workspace = true }
-eyre = { workspace = true }
-rpc = { workspace = true }
-tokio = { workspace = true }
-vanity = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+color-eyre.workspace = true
+eyre.workspace = true
+grpc.workspace = true
+rpc.workspace = true
+tokio = { workspace = true, features = ["full"] }
+vanity.workspace = true

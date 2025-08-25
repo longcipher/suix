@@ -1,0 +1,10 @@
+[package]
+name = "grpc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+sui-rpc-api.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
