@@ -508,7 +508,7 @@ async fn handle_grpc_command(
         headers: vec![],
     };
 
-    let client = SuiGrpcClient::new(config)
+    let mut client = SuiGrpcClient::new(config)
         .await
         .map_err(|e| eyre::eyre!("Failed to create gRPC client: {}", e))?;
 
@@ -553,7 +553,7 @@ async fn handle_grpc2_command(cmd: GrpcCommands) -> Result<()> {
                 timeout: std::time::Duration::from_secs(timeout),
                 headers: vec![],
             };
-            let client = SuiGrpcClient::new(config)
+            let mut client = SuiGrpcClient::new(config)
                 .await
                 .map_err(|e| eyre::eyre!(e))?;
             client.get_service_info().await.map_err(|e| eyre::eyre!(e))
@@ -572,7 +572,7 @@ async fn handle_grpc2_command(cmd: GrpcCommands) -> Result<()> {
                 timeout: std::time::Duration::from_secs(timeout),
                 headers: vec![],
             };
-            let client = SuiGrpcClient::new(config)
+            let mut client = SuiGrpcClient::new(config)
                 .await
                 .map_err(|e| eyre::eyre!(e))?;
             client
@@ -623,7 +623,7 @@ async fn handle_grpc2_command(cmd: GrpcCommands) -> Result<()> {
                 timeout: std::time::Duration::from_secs(timeout),
                 headers: vec![],
             };
-            let client = SuiGrpcClient::new(config)
+            let mut client = SuiGrpcClient::new(config)
                 .await
                 .map_err(|e| eyre::eyre!(e))?;
             client
@@ -660,7 +660,7 @@ async fn handle_grpc2_command(cmd: GrpcCommands) -> Result<()> {
                 timeout: std::time::Duration::from_secs(timeout),
                 headers: vec![],
             };
-            let client = SuiGrpcClient::new(config)
+            let mut client = SuiGrpcClient::new(config)
                 .await
                 .map_err(|e| eyre::eyre!(e))?;
 
@@ -689,7 +689,7 @@ async fn handle_grpc2_command(cmd: GrpcCommands) -> Result<()> {
                 timeout: std::time::Duration::from_secs(timeout),
                 headers: vec![],
             };
-            let client = SuiGrpcClient::new(config)
+            let mut client = SuiGrpcClient::new(config)
                 .await
                 .map_err(|e| eyre::eyre!(e))?;
             client

@@ -59,7 +59,7 @@ impl SuiGrpcClient {
         &self.config
     }
 
-    pub async fn get_service_info(&self) -> Result<()> {
+    pub async fn get_service_info(&mut self) -> Result<()> {
         if !self.config.json {
             println!("Fetching service info using sui-rpc-api gRPC client...");
         }
@@ -97,7 +97,7 @@ impl SuiGrpcClient {
     }
 
     /// Get latest checkpoint using actual gRPC call
-    pub async fn get_latest_checkpoint(&self) -> Result<()> {
+    pub async fn get_latest_checkpoint(&mut self) -> Result<()> {
         match self.client.get_latest_checkpoint().await {
             Ok(checkpoint) => {
                 if self.config.json {
@@ -135,7 +135,7 @@ impl SuiGrpcClient {
     }
 
     /// Get checkpoint by sequence number
-    pub async fn get_checkpoint(&self, sequence_number: u64) -> Result<()> {
+    pub async fn get_checkpoint(&mut self, sequence_number: u64) -> Result<()> {
         match self.client.get_checkpoint_summary(sequence_number).await {
             Ok(checkpoint) => {
                 if self.config.pretty {
@@ -154,7 +154,7 @@ impl SuiGrpcClient {
     }
 
     /// Get object by ID
-    pub async fn get_object(&self, object_id: &str) -> Result<()> {
+    pub async fn get_object(&mut self, object_id: &str) -> Result<()> {
         // Parse object ID
         let object_id = object_id
             .parse()
@@ -186,7 +186,7 @@ impl SuiGrpcClient {
     }
 
     /// Generic gRPC call - similar to buf curl functionality
-    pub async fn call_grpc_method(&self, call: GrpcCall) -> Result<()> {
+    pub async fn call_grpc_method(&mut self, call: GrpcCall) -> Result<()> {
         println!("Calling gRPC method: {}.{}", call.service, call.method);
 
         match (call.service.as_str(), call.method.as_str()) {
@@ -245,7 +245,7 @@ impl SuiGrpcClient {
     }
 
     /// Get full checkpoint data (similar to buf curl example)
-    pub async fn get_full_checkpoint(&self, sequence_number: u64) -> Result<()> {
+    pub async fn get_full_checkpoint(&mut self, sequence_number: u64) -> Result<()> {
         match self.client.get_full_checkpoint(sequence_number).await {
             Ok(checkpoint_data) => {
                 if self.config.pretty {
@@ -264,7 +264,7 @@ impl SuiGrpcClient {
     }
 
     /// Subscribe to checkpoint stream (streaming gRPC)
-    pub async fn subscribe_checkpoints(&self) -> Result<()> {
+    pub async fn subscribe_checkpoints(&mut self) -> Result<()> {
         if !self.config.json {
             println!("Subscribing to checkpoint stream...");
         }
@@ -289,7 +289,7 @@ impl SuiGrpcClient {
     }
 
     /// Simulate checkpoint subscription by polling
-    async fn simulate_checkpoint_subscription(&self) -> Result<()> {
+    async fn simulate_checkpoint_subscription(&mut self) -> Result<()> {
         let latest = self
             .client
             .get_latest_checkpoint()
@@ -343,7 +343,7 @@ impl SuiGrpcClient {
     }
 
     /// Subscribe to checkpoints continuously (streaming mode)
-    pub async fn subscribe_checkpoints_continuous(&self, interval_secs: u64) -> Result<()> {
+    pub async fn subscribe_checkpoints_continuous(&mut self, interval_secs: u64) -> Result<()> {
         use tokio::time::{Duration, sleep};
 
         if !self.config.json {
@@ -455,7 +455,7 @@ impl SuiGrpcClient {
     }
 
     /// Raw curl-like interface
-    pub async fn curl(&self, service: &str, method: &str, data: Option<&str>) -> Result<()> {
+    pub async fn curl(&mut self, service: &str, method: &str, data: Option<&str>) -> Result<()> {
         let parsed_data = if let Some(data_str) = data {
             Some(
                 serde_json::from_str(data_str)
@@ -478,7 +478,7 @@ impl SuiGrpcClient {
 /// Additional helper methods
 impl SuiGrpcClient {
     /// Test network connectivity
-    pub async fn test_connection(&self) -> Result<bool> {
+    pub async fn test_connection(&mut self) -> Result<bool> {
         match self.client.get_latest_checkpoint().await {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
