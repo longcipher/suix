@@ -18,6 +18,8 @@ const DEFAULT_ADDRESSES_PER_ROUND: usize = 10000;
 pub struct VanityConfig {
     pub starts_with: Option<String>,
     pub ends_with: Option<String>,
+    pub contains: Option<String>,
+    pub scheme: SignatureScheme,
     pub save_path: Option<String>, // None means print to terminal only
     pub threads: usize,
     pub max_addresses: usize,
@@ -29,6 +31,8 @@ impl Default for VanityConfig {
         Self {
             starts_with: None,
             ends_with: None,
+            contains: None,
+            scheme: SignatureScheme::ED25519,
             save_path: None, // Default to terminal output
             threads: 0,      // 0 means use default (number of cores)
             max_addresses: 1,
@@ -158,9 +162,9 @@ fn parse_pattern(pattern: &str) -> Result<(Vec<u8>, Option<u8>, Option<Regex>)> 
 }
 
 /// Generate a new key pair and address using Sui official libraries
-fn generate_new_key() -> Result<GeneratedKey> {
+fn generate_new_key_with_scheme(scheme: SignatureScheme) -> Result<GeneratedKey> {
     let (address, keypair, _scheme, _seed) =
-        sui_keys::key_derive::generate_new_key(SignatureScheme::ED25519, None, None)
+        sui_keys::key_derive::generate_new_key(scheme, None, None)
             .map_err(|e| eyre::eyre!("Failed to generate key: {}", e))?;
 
     // Convert SuiAddress to hex string
@@ -172,13 +176,56 @@ fn generate_new_key() -> Result<GeneratedKey> {
     })
 }
 
+/// Generate a new ED25519 key pair (kept for backwards compatibility in tests).
+#[allow(dead_code)]
+fn generate_new_key() -> Result<GeneratedKey> {
+    generate_new_key_with_scheme(SignatureScheme::ED25519)
+}
+
+/// Estimate the expected number of trials for a hex pattern of `nibbles` length.
+/// Each nibble has a 1/16 chance, so expected trials = 16^nibbles.
+pub fn estimate_difficulty(nibbles: usize) -> f64 {
+    16f64.powi(nibbles as i32)
+}
+
+/// Count effective hex nibbles in a pattern for difficulty estimation.
+pub fn pattern_nibbles(pattern: &str) -> Option<usize> {
+    if pattern.starts_with("0x") {
+        Some(pattern.trim_start_matches("0x").len())
+    } else if pattern.contains('^')
+        || pattern.contains('$')
+        || pattern.contains('[')
+        || pattern.contains(']')
+        || pattern.contains('(')
+        || pattern.contains(')')
+        || pattern.contains('|')
+        || pattern.contains('{')
+        || pattern.contains('}')
+        || pattern.contains('+')
+        || pattern.contains('*')
+        || pattern.contains('?')
+    {
+        None
+    } else {
+        Some(pattern.len())
+    }
+}
+
+/// Match position within the address
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchPosition {
+    Prefix,
+    Suffix,
+    Contains,
+}
+
 /// Check if address matches the pattern
 fn matches_pattern(
     address: &str,
     needle: &[u8],
     uneven_nibble: Option<u8>,
     regex: &Option<Regex>,
-    is_prefix: bool,
+    position: MatchPosition,
 ) -> bool {
     if let Some(re) = regex {
         return re.is_match(address);
@@ -197,25 +244,31 @@ fn matches_pattern(
         Err(_) => return false,
     };
 
-    let matches_bytes = if is_prefix {
-        address_bytes.starts_with(needle)
-    } else {
-        address_bytes.ends_with(needle)
+    let matches_bytes = match position {
+        MatchPosition::Prefix => address_bytes.starts_with(needle),
+        MatchPosition::Suffix => address_bytes.ends_with(needle),
+        MatchPosition::Contains => address_bytes
+            .windows(needle.len().max(1))
+            .any(|w| w == needle),
     };
 
     if !matches_bytes {
         return false;
     }
 
+    if position == MatchPosition::Contains {
+        return true;
+    }
+
     if let Some(uneven) = uneven_nibble {
-        let relevant_byte_idx = if is_prefix {
+        let relevant_byte_idx = if position == MatchPosition::Prefix {
             needle.len()
         } else {
             address_bytes.len() - needle.len() - 1
         };
 
         if relevant_byte_idx < address_bytes.len() {
-            let relevant_nibble = if is_prefix {
+            let relevant_nibble = if position == MatchPosition::Prefix {
                 address_bytes[relevant_byte_idx] & 0xf0
             } else {
                 address_bytes[relevant_byte_idx] & 0x0f
@@ -270,10 +323,17 @@ pub fn generate_vanity_addresses(config: &VanityConfig) -> Result<()> {
         None
     };
 
+    let contains_pattern = if let Some(ref pattern) = config.contains {
+        Some(parse_pattern(pattern).context("Failed to parse contains pattern")?)
+    } else {
+        None
+    };
+
     let count = AtomicUsize::new(0);
     let mut tried = 0;
 
     println!("Generating vanity addresses with {thread_count} threads...");
+    println!("Scheme: {:?}", config.scheme);
     if let Some(ref pattern) = config.starts_with {
         println!("Starts with: {pattern}");
         if let Ok((needle, uneven, regex)) = parse_pattern(pattern) {
@@ -300,9 +360,29 @@ pub fn generate_vanity_addresses(config: &VanityConfig) -> Result<()> {
             }
         }
     }
+    if let Some(ref pattern) = config.contains {
+        println!("Contains: {pattern}");
+        if let Ok((needle, uneven, regex)) = parse_pattern(pattern) {
+            if let Some(re) = &regex {
+                println!("  Using regex: {}", re.as_str());
+            } else {
+                println!("  Looking for bytes: {needle:02x?}");
+                if let Some(nibble) = uneven {
+                    println!("  Plus uneven nibble: {nibble:02x}");
+                }
+            }
+        }
+        if let Some(nibbles) = pattern_nibbles(pattern) {
+            println!(
+                "  Estimated trials: ~{:.0} (16^{nibbles})",
+                estimate_difficulty(nibbles)
+            );
+        }
+    }
     println!("Target: {} addresses", config.max_addresses);
     println!();
 
+    let scheme = config.scheme;
     pool.install(|| {
         while count.load(Ordering::Relaxed) < config.max_addresses {
             (0..config.addresses_per_round)
@@ -312,7 +392,7 @@ pub fn generate_vanity_addresses(config: &VanityConfig) -> Result<()> {
                         return;
                     }
 
-                    let key = match generate_new_key() {
+                    let key = match generate_new_key_with_scheme(scheme) {
                         Ok(key) => key,
                         Err(_) => return,
                     };
@@ -321,7 +401,13 @@ pub fn generate_vanity_addresses(config: &VanityConfig) -> Result<()> {
 
                     // Check starts-with pattern
                     if let Some((ref needle, uneven_nibble, ref regex)) = starts_pattern
-                        && !matches_pattern(&key.address, needle, uneven_nibble, regex, true)
+                        && !matches_pattern(
+                            &key.address,
+                            needle,
+                            uneven_nibble,
+                            regex,
+                            MatchPosition::Prefix,
+                        )
                     {
                         matches = false;
                     }
@@ -329,7 +415,27 @@ pub fn generate_vanity_addresses(config: &VanityConfig) -> Result<()> {
                     // Check ends-with pattern
                     if matches
                         && let Some((ref needle, uneven_nibble, ref regex)) = ends_pattern
-                        && !matches_pattern(&key.address, needle, uneven_nibble, regex, false)
+                        && !matches_pattern(
+                            &key.address,
+                            needle,
+                            uneven_nibble,
+                            regex,
+                            MatchPosition::Suffix,
+                        )
+                    {
+                        matches = false;
+                    }
+
+                    // Check contains pattern
+                    if matches
+                        && let Some((ref needle, uneven_nibble, ref regex)) = contains_pattern
+                        && !matches_pattern(
+                            &key.address,
+                            needle,
+                            uneven_nibble,
+                            regex,
+                            MatchPosition::Contains,
+                        )
                     {
                         matches = false;
                     }
@@ -436,5 +542,68 @@ mod tests {
         // Sui addresses are 66 characters: "0x" + 64 hex chars (32 bytes)
         assert_eq!(key.address.len(), 66);
         assert!(key.address.starts_with("0x"));
+    }
+
+    #[test]
+    fn test_matches_contains() {
+        let needle = vec![0xab, 0xcd];
+        assert!(matches_pattern(
+            "0x00abcdef00",
+            &needle,
+            None,
+            &None,
+            MatchPosition::Contains
+        ));
+        assert!(!matches_pattern(
+            "0x0011223300",
+            &needle,
+            None,
+            &None,
+            MatchPosition::Contains
+        ));
+    }
+
+    #[test]
+    fn test_matches_prefix_suffix() {
+        let needle = vec![0xab];
+        assert!(matches_pattern(
+            "0xab00112200",
+            &needle,
+            None,
+            &None,
+            MatchPosition::Prefix
+        ));
+        assert!(!matches_pattern(
+            "0x00ab112200",
+            &needle,
+            None,
+            &None,
+            MatchPosition::Prefix
+        ));
+        assert!(matches_pattern(
+            "0x00112200ab",
+            &needle,
+            None,
+            &None,
+            MatchPosition::Suffix
+        ));
+    }
+
+    #[test]
+    fn test_estimate_difficulty() {
+        assert_eq!(estimate_difficulty(0), 1.0);
+        assert_eq!(estimate_difficulty(1), 16.0);
+        assert_eq!(estimate_difficulty(2), 256.0);
+        assert_eq!(pattern_nibbles("0xabcd"), Some(4));
+        assert_eq!(pattern_nibbles("ace"), Some(3));
+        assert_eq!(pattern_nibbles("^[a-f]{4}"), None);
+    }
+
+    #[test]
+    fn test_generate_secp256k1() {
+        let key = generate_new_key_with_scheme(SignatureScheme::Secp256k1).unwrap();
+        assert_eq!(key.address.len(), 66);
+        let key = generate_new_key_with_scheme(SignatureScheme::Secp256r1).unwrap();
+        assert_eq!(key.address.len(), 66);
     }
 }

@@ -1,701 +1,1107 @@
-use std::path::PathBuf;
+use clap::Parser;
+use eyre::Result;
 
-use clap::{Parser, Subcommand};
-use eyre::{Result, bail};
-use grpc::{GrpcConfig, SuiGrpcClient};
-use rpc::{RpcConfig, make_rpc_call, methods};
-use vanity::{VanityConfig, generate_vanity_addresses};
+mod commands;
 
-#[derive(Parser)]
-#[command(name = "suix")]
-#[command(about = "A comprehensive CLI tool for Sui blockchain operations")]
-#[command(version)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
+use crate::commands::{
+    Cli, Commands, check_pretty_json, faucet_url_for_profile, grpc_config_from, parse_headers,
+    resolve_key_source, rpc_config_from_url, shorten_address,
+};
 
-#[derive(Subcommand)]
-enum Commands {
-    /// Generate Sui vanity addresses
-    Vanity {
-        /// Prefix regex pattern or hex string that the address should start with
-        #[arg(long, value_name = "PATTERN")]
-        starts_with: Option<String>,
-
-        /// Suffix regex pattern or hex string that the address should end with  
-        #[arg(long, value_name = "PATTERN")]
-        ends_with: Option<String>,
-
-        /// Path to save the generated vanity contract addresses to (if not specified, prints to terminal)
-        #[arg(long, value_name = "PATH")]
-        save_path: Option<PathBuf>,
-
-        /// Number of threads to use. Specifying 0 defaults to the number of logical cores
-        #[arg(short = 'j', long, value_name = "THREADS", default_value = "0")]
-        threads: usize,
-
-        /// Number of vanity addresses to generate before stopping
-        #[arg(short = 'n', long, value_name = "COUNT", default_value = "1")]
-        count: usize,
-
-        /// Number of addresses to generate per round (affects progress reporting frequency)
-        #[arg(long, value_name = "COUNT", default_value = "10000")]
-        addresses_per_round: usize,
-    },
-    /// Make Sui JSON-RPC calls
-    JsonRpc {
-        /// RPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-
-        /// RPC method to call
-        #[arg(value_name = "METHOD")]
-        method: String,
-
-        /// Parameters for the RPC call (JSON format)
-        #[arg(value_name = "PARAMS")]
-        params: Option<String>,
-
-        /// Pretty print the JSON response
-        #[arg(short, long)]
-        pretty: bool,
-    },
-    /// Make raw gRPC calls (buf curl-like interface)
-    Grpc {
-        /// gRPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-
-        /// gRPC service to call
-        #[arg(value_name = "SERVICE")]
-        service: String,
-
-        /// gRPC method to call
-        #[arg(value_name = "METHOD")]
-        method: String,
-
-        /// Parameters for the gRPC call (JSON format)
-        #[arg(value_name = "PARAMS")]
-        params: Option<String>,
-
-        /// Pretty print the response
-        #[arg(short, long)]
-        pretty: bool,
-
-        /// Output only JSON result for pipeline processing
-        #[arg(short = 'j', long)]
-        json: bool,
-
-        /// Request timeout in seconds
-        #[arg(long, value_name = "SECONDS", default_value = "30")]
-        timeout: u64,
-    },
-    /// Quick access to common JSON-RPC methods
-    #[command(subcommand)]
-    JsonRpcQuick(QueryCommands),
-    /// Quick access to common gRPC methods (using sui-rpc-api)
-    #[command(subcommand)]
-    GrpcQuick(GrpcCommands),
-}
-
-#[derive(Subcommand)]
-enum QueryCommands {
-    /// Get chain identifier
-    Chain {
-        /// RPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the JSON response
-        #[arg(short, long)]
-        pretty: bool,
-    },
-    /// Get latest checkpoint sequence number
-    Checkpoint {
-        /// RPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the JSON response
-        #[arg(short, long)]
-        pretty: bool,
-    },
-    /// Get object information by ID
-    Object {
-        /// Object ID to query
-        #[arg(value_name = "OBJECT_ID")]
-        object_id: String,
-        /// RPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the JSON response
-        #[arg(short, long)]
-        pretty: bool,
-    },
-    /// Get transaction by digest
-    Tx {
-        /// Transaction digest
-        #[arg(value_name = "DIGEST")]
-        digest: String,
-        /// RPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the JSON response
-        #[arg(short, long)]
-        pretty: bool,
-    },
-    /// Get account balance
-    Balance {
-        /// Address to query
-        #[arg(value_name = "ADDRESS")]
-        address: String,
-        /// Coin type (optional)
-        #[arg(long, value_name = "COIN_TYPE")]
-        coin_type: Option<String>,
-        /// RPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the JSON response
-        #[arg(short, long)]
-        pretty: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum GrpcCommands {
-    /// Get service information
-    Info {
-        /// gRPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the response
-        #[arg(short, long)]
-        pretty: bool,
-        /// Output only JSON result for pipeline processing
-        #[arg(short = 'j', long)]
-        json: bool,
-        /// Request timeout in seconds
-        #[arg(long, value_name = "SECONDS", default_value = "30")]
-        timeout: u64,
-    },
-    /// Get object information by ID
-    Object {
-        /// Object ID to query
-        #[arg(value_name = "OBJECT_ID")]
-        object_id: String,
-        /// gRPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the response
-        #[arg(short, long)]
-        pretty: bool,
-        /// Output only JSON result for pipeline processing
-        #[arg(short = 'j', long)]
-        json: bool,
-        /// Request timeout in seconds
-        #[arg(long, value_name = "SECONDS", default_value = "30")]
-        timeout: u64,
-    },
-    /// Get transaction by digest
-    Tx {
-        /// Transaction digest
-        #[arg(value_name = "DIGEST")]
-        digest: String,
-        /// gRPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the response
-        #[arg(short, long)]
-        pretty: bool,
-        /// Request timeout in seconds
-        #[arg(long, value_name = "SECONDS", default_value = "30")]
-        timeout: u64,
-    },
-    /// Get account balance
-    Balance {
-        /// Address to query
-        #[arg(value_name = "ADDRESS")]
-        address: String,
-        /// Coin type (optional)
-        #[arg(long, value_name = "COIN_TYPE")]
-        coin_type: Option<String>,
-        /// gRPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the response
-        #[arg(short, long)]
-        pretty: bool,
-        /// Request timeout in seconds
-        #[arg(long, value_name = "SECONDS", default_value = "30")]
-        timeout: u64,
-    },
-    /// List account balances
-    Balances {
-        /// Address to query
-        #[arg(value_name = "ADDRESS")]
-        address: String,
-        /// gRPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the response
-        #[arg(short, long)]
-        pretty: bool,
-        /// Request timeout in seconds
-        #[arg(long, value_name = "SECONDS", default_value = "30")]
-        timeout: u64,
-    },
-    /// Raw gRPC call (similar to buf curl)
-    Curl {
-        /// gRPC service name
-        #[arg(value_name = "SERVICE")]
-        service: String,
-        /// gRPC method name
-        #[arg(value_name = "METHOD")]
-        method: String,
-        /// Request data as JSON string
-        #[arg(short, long, value_name = "JSON")]
-        data: Option<String>,
-        /// gRPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the response
-        #[arg(short, long)]
-        pretty: bool,
-        /// Request timeout in seconds
-        #[arg(long, value_name = "SECONDS", default_value = "30")]
-        timeout: u64,
-    },
-    /// List available gRPC methods
-    ListMethods {
-        /// gRPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-    },
-    /// Subscribe to checkpoint stream (supports continuous streaming)
-    Subscribe {
-        /// gRPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the response
-        #[arg(short, long)]
-        pretty: bool,
-        /// Output only JSON result for pipeline processing
-        #[arg(short = 'j', long)]
-        json: bool,
-        /// Enable continuous streaming mode (polls for new checkpoints)
-        #[arg(short = 's', long)]
-        stream: bool,
-        /// Polling interval in seconds for streaming mode
-        #[arg(long, value_name = "SECONDS", default_value = "5")]
-        interval: u64,
-        /// Request timeout in seconds
-        #[arg(long, value_name = "SECONDS", default_value = "30")]
-        timeout: u64,
-    },
-    /// Get full checkpoint data
-    FullCheckpoint {
-        /// Checkpoint sequence number
-        #[arg(value_name = "SEQUENCE_NUMBER")]
-        sequence_number: u64,
-        /// gRPC endpoint URL
-        #[arg(
-            long,
-            value_name = "URL",
-            default_value = "https://fullnode.mainnet.sui.io:443"
-        )]
-        url: String,
-        /// Pretty print the response
-        #[arg(short, long)]
-        pretty: bool,
-        /// Request timeout in seconds
-        #[arg(long, value_name = "SECONDS", default_value = "30")]
-        timeout: u64,
-    },
-}
-
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     color_eyre::install()?;
 
     let cli = Cli::parse();
+    let profile = cli.profile.as_deref();
 
     match cli.command {
-        Commands::Vanity {
-            starts_with,
-            ends_with,
-            save_path,
-            threads,
-            count,
-            addresses_per_round,
-        } => {
-            // Validate arguments
-            if starts_with.is_none() && ends_with.is_none() {
-                bail!("At least one of --starts-with or --ends-with must be specified");
-            }
-
-            if count == 0 {
-                bail!("Count must be greater than 0");
-            }
-
-            if addresses_per_round == 0 {
-                bail!("Addresses per round must be greater than 0");
-            }
-
-            // Ensure save path exists if specified
-            if let Some(ref save_path) = save_path {
-                std::fs::create_dir_all(save_path)?;
-            }
-
-            let config = VanityConfig {
-                starts_with,
-                ends_with,
-                save_path: save_path.map(|p| p.to_string_lossy().to_string()),
-                threads,
-                max_addresses: count,
-                addresses_per_round,
-            };
-
-            generate_vanity_addresses(&config)
-        }
-        Commands::JsonRpc {
-            url,
-            method,
-            params,
-            pretty,
-        } => {
-            let rt = tokio::runtime::Runtime::new()?;
-            let config = RpcConfig { url, pretty };
-            rt.block_on(make_rpc_call(&config, &method, params.as_deref()))
-        }
-        Commands::Grpc {
-            url,
-            service,
-            method,
-            params: _params,
-            pretty,
-            json,
-            timeout,
-        } => {
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(handle_grpc_command(
-                url, service, method, pretty, json, timeout,
-            ))
-        }
-        Commands::JsonRpcQuick(query_cmd) => {
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(handle_query_command(query_cmd))
-        }
-        Commands::GrpcQuick(grpc_cmd) => {
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(handle_grpc2_command(grpc_cmd))
-        }
+        Commands::Vanity(args) => handlers::handle_vanity(args),
+        Commands::JsonRpc(args) => handlers::handle_json_rpc(args, profile).await,
+        Commands::Grpc(args) => handlers::handle_grpc(args, profile).await,
+        Commands::JsonRpcQuick(cmd) => handlers::handle_query(cmd, profile).await,
+        Commands::GrpcQuick(cmd) => handlers::handle_grpc_quick(cmd, profile).await,
+        Commands::Key(cmd) => handlers::handle_key(cmd).await,
+        Commands::Query(cmd) => handlers::handle_read(cmd, profile).await,
+        Commands::Coin(cmd) => handlers::handle_coin(cmd, profile).await,
+        Commands::Tx(cmd) => handlers::handle_tx(cmd, profile).await,
+        Commands::Stake(cmd) => handlers::handle_stake(cmd, profile).await,
+        Commands::System(cmd) => handlers::handle_system(cmd, profile).await,
+        Commands::Util(cmd) => handlers::handle_util(cmd, profile).await,
+        Commands::Graphql(args) => handlers::handle_graphql(args).await,
+        Commands::Completion(args) => handlers::handle_completion(args),
     }
 }
 
-async fn handle_query_command(cmd: QueryCommands) -> Result<()> {
-    match cmd {
-        QueryCommands::Chain { url, pretty } => {
-            let config = RpcConfig { url, pretty };
-            methods::get_chain_identifier(&config).await
-        }
-        QueryCommands::Checkpoint { url, pretty } => {
-            let config = RpcConfig { url, pretty };
-            methods::get_latest_checkpoint_sequence_number(&config).await
-        }
-        QueryCommands::Object {
-            object_id,
-            url,
-            pretty,
-        } => {
-            let config = RpcConfig { url, pretty };
-            methods::get_object(&config, &object_id).await
-        }
-        QueryCommands::Tx {
-            digest,
-            url,
-            pretty,
-        } => {
-            let config = RpcConfig { url, pretty };
-            methods::get_transaction_block(&config, &digest).await
-        }
-        QueryCommands::Balance {
-            address,
-            coin_type,
-            url,
-            pretty,
-        } => {
-            let config = RpcConfig { url, pretty };
-            methods::get_balance(&config, &address, coin_type.as_deref()).await
-        }
-    }
-}
+mod handlers {
+    use super::*;
 
-async fn handle_grpc_command(
-    url: String,
-    service: String,
-    method: String,
-    pretty: bool,
-    json: bool,
-    timeout: u64,
-) -> Result<()> {
-    use std::time::Duration;
+    pub fn handle_vanity(args: crate::commands::VanityArgs) -> Result<()> {
+        use vanity::VanityConfig;
 
-    use grpc::{GrpcConfig, SuiGrpcClient};
-
-    let config = GrpcConfig {
-        url,
-        pretty,
-        json,
-        timeout: Duration::from_secs(timeout),
-        headers: vec![],
-    };
-
-    let mut client = SuiGrpcClient::new(config)
-        .await
-        .map_err(|e| eyre::eyre!("Failed to create gRPC client: {}", e))?;
-
-    // Map common service.method combinations
-    match (service.as_str(), method.as_str()) {
-        ("CheckpointService", "GetLatestCheckpoint") => {
-            client
-                .get_service_info()
-                .await
-                .map_err(|e| eyre::eyre!("Failed to get service info: {}", e))?;
+        if args.starts_with.is_none() && args.ends_with.is_none() && args.contains.is_none() {
+            eyre::bail!("At least one of --starts-with, --ends-with, or --contains is required");
         }
-        ("ObjectService", "GetObject") => {
-            println!("GetObject requires an object ID parameter");
+        if args.count == 0 {
+            eyre::bail!("Count must be greater than 0");
+        }
+        if args.addresses_per_round == 0 {
+            eyre::bail!("Addresses per round must be greater than 0");
+        }
+        if let Some(ref save_path) = args.save_path {
+            std::fs::create_dir_all(save_path)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let perm = std::fs::Permissions::from_mode(0o700);
+                std::fs::set_permissions(save_path, perm)?;
+            }
+        }
+
+        let scheme = keystore::parse_scheme(&args.scheme)?;
+
+        if args.estimate_only {
+            for (label, pattern) in [
+                ("starts-with", &args.starts_with),
+                ("ends-with", &args.ends_with),
+                ("contains", &args.contains),
+            ]
+            .iter()
+            {
+                if let Some(p) = pattern {
+                    match vanity::pattern_nibbles(p) {
+                        Some(n) => println!(
+                            "{label} '{p}': ~{:.0} trials expected (16^{n})",
+                            vanity::estimate_difficulty(n)
+                        ),
+                        None => println!("{label} '{p}': regex pattern, difficulty varies"),
+                    }
+                }
+            }
             return Ok(());
         }
-        ("CheckpointService", "GetCheckpoint") => {
-            println!("GetCheckpoint requires a checkpoint ID parameter");
-            return Ok(());
-        }
-        _ => {
-            println!("Service: {service}, Method: {method}");
-            println!("This is a placeholder for raw gRPC call functionality");
-            println!("You can implement specific method calls here");
-        }
+
+        let config = VanityConfig {
+            starts_with: args.starts_with,
+            ends_with: args.ends_with,
+            contains: args.contains,
+            scheme,
+            save_path: args.save_path.map(|p| p.to_string_lossy().to_string()),
+            threads: args.threads,
+            max_addresses: args.count,
+            addresses_per_round: args.addresses_per_round,
+        };
+        vanity::generate_vanity_addresses(&config)
     }
 
-    Ok(())
-}
+    pub async fn handle_json_rpc(
+        args: crate::commands::JsonRpcArgs,
+        profile: Option<&str>,
+    ) -> Result<()> {
+        let config = rpc_config_from_url(&args.url, args.pretty, profile);
+        rpc::make_rpc_call(&config, &args.method, args.params.as_deref()).await
+    }
 
-async fn handle_grpc2_command(cmd: GrpcCommands) -> Result<()> {
-    match cmd {
-        GrpcCommands::Info {
-            url,
-            pretty,
-            json,
-            timeout,
-        } => {
-            let config = GrpcConfig {
-                url,
-                pretty,
-                json,
-                timeout: std::time::Duration::from_secs(timeout),
-                headers: vec![],
-            };
-            let mut client = SuiGrpcClient::new(config)
-                .await
-                .map_err(|e| eyre::eyre!(e))?;
-            client.get_service_info().await.map_err(|e| eyre::eyre!(e))
-        }
-        GrpcCommands::Object {
-            object_id,
-            url,
-            pretty,
-            json,
-            timeout,
-        } => {
-            let config = GrpcConfig {
-                url,
-                pretty,
-                json,
-                timeout: std::time::Duration::from_secs(timeout),
-                headers: vec![],
-            };
-            let mut client = SuiGrpcClient::new(config)
-                .await
-                .map_err(|e| eyre::eyre!(e))?;
-            client
-                .get_object(&object_id)
-                .await
-                .map_err(|e| eyre::eyre!(e))
-        }
-        GrpcCommands::Tx {
-            digest: _digest,
-            url: _url,
-            pretty: _pretty,
-            timeout: _timeout,
-        } => {
-            println!("gRPC transaction query not yet implemented");
-            Ok(())
-        }
-        GrpcCommands::Balance {
-            address: _address,
-            coin_type: _coin_type,
-            url: _url,
-            pretty: _pretty,
-            timeout: _timeout,
-        } => {
-            println!("gRPC balance query not yet implemented");
-            Ok(())
-        }
-        GrpcCommands::Balances {
-            address: _address,
-            url: _url,
-            pretty: _pretty,
-            timeout: _timeout,
-        } => {
-            println!("gRPC balances query not yet implemented");
-            Ok(())
-        }
-        GrpcCommands::Curl {
-            service,
-            method,
-            data,
-            url,
-            pretty,
-            timeout,
-        } => {
-            let config = GrpcConfig {
-                url,
-                pretty,
-                json: false,
-                timeout: std::time::Duration::from_secs(timeout),
-                headers: vec![],
-            };
-            let mut client = SuiGrpcClient::new(config)
-                .await
-                .map_err(|e| eyre::eyre!(e))?;
-            client
-                .curl(&service, &method, data.as_deref())
-                .await
-                .map_err(|e| eyre::eyre!(e))
-        }
-        GrpcCommands::ListMethods { url } => {
-            let config = GrpcConfig {
-                url,
-                pretty: false,
-                json: false,
-                timeout: std::time::Duration::from_secs(30),
-                headers: vec![],
-            };
-            let client = SuiGrpcClient::new(config)
-                .await
-                .map_err(|e| eyre::eyre!(e))?;
-            client.show_methods();
-            Ok(())
-        }
-        GrpcCommands::Subscribe {
-            url,
-            pretty,
-            json,
-            stream,
-            interval,
-            timeout,
-        } => {
-            let config = GrpcConfig {
-                url,
-                pretty,
-                json,
-                timeout: std::time::Duration::from_secs(timeout),
-                headers: vec![],
-            };
-            let mut client = SuiGrpcClient::new(config)
-                .await
-                .map_err(|e| eyre::eyre!(e))?;
-
-            if stream {
-                client
-                    .subscribe_checkpoints_continuous(interval)
-                    .await
-                    .map_err(|e| eyre::eyre!(e))
+    pub async fn handle_grpc(args: crate::commands::GrpcArgs, profile: Option<&str>) -> Result<()> {
+        check_pretty_json(args.pretty, args.json)?;
+        let mut url = args.url.clone();
+        if profile.is_some() {
+            let mut rpc = String::new();
+            crate::commands::apply_profile(profile, &mut rpc, Some(&mut url));
+            if args.url == crate::commands::grpc_url_default() {
+                // keep profile URL
             } else {
-                client
-                    .subscribe_checkpoints()
-                    .await
-                    .map_err(|e| eyre::eyre!(e))
+                url = args.url.clone();
             }
         }
-        GrpcCommands::FullCheckpoint {
-            sequence_number,
+        let config = grpc::GrpcConfig {
             url,
-            pretty,
-            timeout,
-        } => {
-            let config = GrpcConfig {
-                url,
-                pretty,
-                json: false,
-                timeout: std::time::Duration::from_secs(timeout),
-                headers: vec![],
-            };
-            let mut client = SuiGrpcClient::new(config)
+            pretty: args.pretty,
+            json: args.json,
+            timeout: std::time::Duration::from_secs(args.timeout),
+            headers: parse_headers(&args.header)?,
+        };
+        let mut client = grpc::SuiGrpcClient::new(config)
+            .await
+            .map_err(|e| eyre::eyre!("{e}"))?;
+        client
+            .curl(&args.service, &args.method, args.params.as_deref())
+            .await
+            .map_err(|e| eyre::eyre!("{e}"))
+    }
+
+    pub async fn handle_query(
+        cmd: crate::commands::QueryCommands,
+        profile: Option<&str>,
+    ) -> Result<()> {
+        use crate::commands::QueryCommands as Q;
+        use rpc::methods;
+
+        match cmd {
+            Q::Chain(a) => {
+                methods::get_chain_identifier(&rpc_config_from_url(&a.url, a.pretty, profile)).await
+            }
+            Q::Checkpoint(a) => {
+                methods::get_latest_checkpoint_sequence_number(&rpc_config_from_url(
+                    &a.url, a.pretty, profile,
+                ))
                 .await
-                .map_err(|e| eyre::eyre!(e))?;
-            client
-                .get_full_checkpoint(sequence_number)
+            }
+            Q::Object(a) => {
+                methods::get_object(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.object_id,
+                )
                 .await
-                .map_err(|e| eyre::eyre!(e))
+            }
+            Q::Tx(a) => {
+                methods::get_transaction_block(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.digest,
+                )
+                .await
+            }
+            Q::Balance(a) => {
+                methods::get_balance(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.address,
+                    a.coin_type.as_deref(),
+                )
+                .await
+            }
+            Q::Balances(a) => {
+                methods::get_all_balances(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.address,
+                )
+                .await
+            }
+            Q::Coins(a) => {
+                methods::get_coins(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.address,
+                    a.coin_type.as_deref(),
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            Q::AllCoins(a) => {
+                methods::get_all_coins(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.address,
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            Q::Owned(a) => {
+                methods::get_owned_objects(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.address,
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            Q::DynamicFields(a) => {
+                methods::get_dynamic_fields(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.parent_id,
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            Q::Events(a) => {
+                methods::query_events(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    a.filter.as_deref(),
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            Q::Stakes(a) => {
+                methods::get_stakes(&rpc_config_from_url(&a.url, a.pretty, profile), &a.address)
+                    .await
+            }
+            Q::PastObject(a) => {
+                methods::try_get_past_object(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.object_id,
+                    a.version,
+                )
+                .await
+            }
+            Q::CheckpointById(a) => {
+                methods::get_checkpoint(&rpc_config_from_url(&a.url, a.pretty, profile), &a.id)
+                    .await
+            }
+            Q::Checkpoints(a) => {
+                methods::get_checkpoints(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    a.cursor.as_deref(),
+                    Some(a.limit),
+                )
+                .await
+            }
+            Q::Txs(a) => {
+                methods::query_transactions(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    a.filter.as_deref(),
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            Q::CoinMetadata(a) => {
+                methods::get_coin_metadata(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.coin_type,
+                )
+                .await
+            }
+            Q::TotalSupply(a) => {
+                methods::get_total_supply(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.coin_type,
+                )
+                .await
+            }
+            Q::Package(a) => {
+                methods::get_normalized_move_modules(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.package_id,
+                )
+                .await
+            }
+            Q::FunctionArgs(a) => {
+                methods::get_move_function_arg_types(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.package_id,
+                    &a.module,
+                    &a.function,
+                )
+                .await
+            }
+            Q::Protocol(a) => {
+                methods::get_protocol_config(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    a.version,
+                )
+                .await
+            }
+            Q::DryRun(a) => {
+                methods::dry_run(&rpc_config_from_url(&a.url, a.pretty, profile), &a.tx_bytes).await
+            }
+            Q::DevInspect(a) => {
+                methods::dev_inspect(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.sender,
+                    &a.package,
+                    &a.module,
+                    &a.function,
+                    &a.type_args,
+                    &a.args,
+                )
+                .await
+            }
         }
+    }
+
+    pub async fn handle_grpc_quick(
+        cmd: crate::commands::GrpcCommands,
+        profile: Option<&str>,
+    ) -> Result<()> {
+        use crate::commands::GrpcCommands as G;
+
+        match cmd {
+            G::Info(e) => {
+                check_pretty_json(e.pretty, e.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&e, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .get_service_info()
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::Object(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                if let Some(version) = a.version {
+                    client
+                        .get_object_with_version(&a.object_id, version)
+                        .await
+                        .map_err(|e| eyre::eyre!("{e}"))
+                } else {
+                    client
+                        .get_object(&a.object_id)
+                        .await
+                        .map_err(|e| eyre::eyre!("{e}"))
+                }
+            }
+            G::Tx(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .get_transaction(&a.digest)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::Balance(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .get_balance(&a.address, a.coin_type.as_deref())
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::Balances(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .list_balances(&a.address)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::Owned(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .list_owned_objects(&a.address, a.object_type.as_deref(), a.page_size)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::DynamicFields(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .get_dynamic_fields(&a.parent_id, a.page_size)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::Chain(e) => {
+                check_pretty_json(e.pretty, e.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&e, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .get_chain_identifier()
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::GasPrice(e) => {
+                check_pretty_json(e.pretty, e.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&e, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .get_reference_gas_price()
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::Stakes(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .list_delegated_stake(&a.address)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::SystemState(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .get_system_state(a.epoch)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::Simulate(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .simulate_transaction(&a.tx_bytes)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::Execute(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .execute_transaction(&a.tx_bytes, &a.signatures, a.wait)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::Curl(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client
+                    .curl(&a.service, &a.method, a.data.as_deref())
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))
+            }
+            G::ListMethods(a) => {
+                let config = grpc::GrpcConfig {
+                    url: a.url,
+                    pretty: false,
+                    json: false,
+                    timeout: std::time::Duration::from_secs(30),
+                    headers: vec![],
+                };
+                let client = grpc::SuiGrpcClient::new(config)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                client.show_methods();
+                Ok(())
+            }
+            G::Subscribe(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                if a.stream {
+                    client
+                        .subscribe_checkpoints_continuous(a.interval)
+                        .await
+                        .map_err(|e| eyre::eyre!("{e}"))
+                } else {
+                    client
+                        .try_stream_checkpoints(a.limit.or(Some(5)))
+                        .await
+                        .map_err(|e| eyre::eyre!("{e}"))
+                }
+            }
+            G::FullCheckpoint(a) => {
+                check_pretty_json(a.endpoint.pretty, a.endpoint.json)?;
+                let mut client = grpc::SuiGrpcClient::new(grpc_config_from(&a.endpoint, profile)?)
+                    .await
+                    .map_err(|e| eyre::eyre!("{e}"))?;
+                if let Some(dir) = a.dump_dir {
+                    client
+                        .get_full_checkpoint(a.sequence_number)
+                        .await
+                        .map_err(|e| eyre::eyre!("{e}"))?;
+                    client
+                        .dump_full_checkpoint(a.sequence_number, &dir)
+                        .await
+                        .map_err(|e| eyre::eyre!("{e}"))
+                } else {
+                    client
+                        .get_full_checkpoint(a.sequence_number)
+                        .await
+                        .map_err(|e| eyre::eyre!("{e}"))
+                }
+            }
+        }
+    }
+
+    pub async fn handle_key(cmd: crate::commands::KeyCommands) -> Result<()> {
+        use crate::commands::KeyCommands as K;
+
+        match cmd {
+            K::Generate(a) => {
+                let scheme = keystore::parse_scheme(&a.scheme)?;
+                keystore::generate(scheme, a.word_length)
+            }
+            K::Import(a) => {
+                let secret = a.secret.map_or_else(
+                    || {
+                        std::env::var("SUIX_KEY")
+                            .map_err(|_| eyre::eyre!("Missing --secret and SUIX_KEY is not set"))
+                    },
+                    Ok,
+                )?;
+                keystore::import_to_keystore(a.keystore, &secret, a.alias)
+            }
+            K::Export(a) => keystore::export_from_keystore(a.keystore, &a.address),
+            K::List(a) => keystore::list_keystore(a.keystore),
+            K::Sign(a) => {
+                let keypair = resolve_key_source(&a.key)?;
+                let bytes = hex::decode(a.message.trim_start_matches("0x"))
+                    .map_err(|e| eyre::eyre!("Invalid hex message: {}", e))?;
+                keystore::sign_bytes(&keypair, &bytes)
+            }
+            K::SignTx(a) => {
+                let keypair = resolve_key_source(&a.key)?;
+                keystore::sign_transaction_data(&keypair, &a.tx_bytes)
+            }
+            K::DecodeSig(a) => keystore::decode_signature(&a.signature),
+            K::MultisigAddress(a) => {
+                if a.pks.is_empty() {
+                    eyre::bail!("At least one --pk is required");
+                }
+                keystore::multisig_address(&a.pks, &a.weights, a.threshold)
+            }
+        }
+    }
+
+    pub async fn handle_read(
+        cmd: crate::commands::ReadCommands,
+        profile: Option<&str>,
+    ) -> Result<()> {
+        use crate::commands::ReadCommands as R;
+        use rpc::methods;
+
+        match cmd {
+            R::Object(a) => {
+                methods::get_object(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.object_id,
+                )
+                .await
+            }
+            R::Owned(a) => {
+                methods::get_owned_objects(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.address,
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            R::PastObject(a) => {
+                methods::try_get_past_object(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.object_id,
+                    a.version,
+                )
+                .await
+            }
+            R::DynamicFields(a) => {
+                methods::get_dynamic_fields(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.parent_id,
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            R::Tx(a) => {
+                methods::get_transaction_block(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.digest,
+                )
+                .await
+            }
+            R::Txs(a) => {
+                methods::query_transactions(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    a.filter.as_deref(),
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            R::Events(a) => {
+                methods::query_events(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    a.filter.as_deref(),
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            R::Checkpoint(a) => {
+                methods::get_checkpoint(&rpc_config_from_url(&a.url, a.pretty, profile), &a.id)
+                    .await
+            }
+            R::Checkpoints(a) => {
+                methods::get_checkpoints(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    a.cursor.as_deref(),
+                    Some(a.limit),
+                )
+                .await
+            }
+            R::Package(a) => {
+                methods::get_normalized_move_modules(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.package_id,
+                )
+                .await
+            }
+            R::FunctionArgs(a) => {
+                methods::get_move_function_arg_types(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.package_id,
+                    &a.module,
+                    &a.function,
+                )
+                .await
+            }
+        }
+    }
+
+    pub async fn handle_coin(
+        cmd: crate::commands::CoinCommands,
+        profile: Option<&str>,
+    ) -> Result<()> {
+        use crate::commands::CoinCommands as C;
+        use rpc::methods;
+
+        match cmd {
+            C::Balance(a) => {
+                methods::get_balance(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.address,
+                    a.coin_type.as_deref(),
+                )
+                .await
+            }
+            C::Balances(a) => {
+                methods::get_all_balances(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.address,
+                )
+                .await
+            }
+            C::Coins(a) => {
+                methods::get_coins(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.address,
+                    a.coin_type.as_deref(),
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            C::AllCoins(a) => {
+                methods::get_all_coins(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.address,
+                    Some(a.limit),
+                    a.cursor.as_deref(),
+                )
+                .await
+            }
+            C::Metadata(a) => {
+                methods::get_coin_metadata(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.coin_type,
+                )
+                .await
+            }
+            C::Supply(a) => {
+                methods::get_total_supply(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.coin_type,
+                )
+                .await
+            }
+        }
+    }
+
+    pub async fn handle_tx(cmd: crate::commands::TxCommands, profile: Option<&str>) -> Result<()> {
+        use crate::commands::TxCommands as T;
+        use rpc::tx::{self, TxOptions};
+
+        match cmd {
+            T::Transfer(a) => {
+                let config = rpc_config_from_url(&a.base.url, a.base.pretty, profile);
+                tx::transfer_object(
+                    &config,
+                    &a.base.signer,
+                    &a.object_id,
+                    &a.to,
+                    TxOptions {
+                        gas: a.base.gas.as_deref(),
+                        gas_budget: a.base.gas_budget,
+                        dry_run: a.base.dry_run,
+                    },
+                )
+                .await
+            }
+            T::TransferSui(a) => {
+                let config = rpc_config_from_url(&a.base.url, a.base.pretty, profile);
+                tx::transfer_sui(
+                    &config,
+                    &a.base.signer,
+                    &a.coin,
+                    &a.to,
+                    a.amount,
+                    a.base.gas_budget,
+                    a.base.dry_run,
+                )
+                .await
+            }
+            T::Pay(a) => {
+                let config = rpc_config_from_url(&a.base.url, a.base.pretty, profile);
+                tx::pay(
+                    &config,
+                    &a.base.signer,
+                    &a.coins,
+                    &a.recipients,
+                    &a.amounts,
+                    TxOptions {
+                        gas: a.base.gas.as_deref(),
+                        gas_budget: a.base.gas_budget,
+                        dry_run: a.base.dry_run,
+                    },
+                )
+                .await
+            }
+            T::PaySui(a) => {
+                let config = rpc_config_from_url(&a.url, a.pretty, profile);
+                tx::pay_sui(
+                    &config,
+                    &a.signer,
+                    &a.coins,
+                    &a.recipients,
+                    &a.amounts,
+                    a.gas_budget,
+                    a.dry_run,
+                )
+                .await
+            }
+            T::PayAllSui(a) => {
+                let config = rpc_config_from_url(&a.url, a.pretty, profile);
+                tx::pay_all_sui(&config, &a.signer, &a.coins, &a.to, a.gas_budget, a.dry_run).await
+            }
+            T::Call(a) => {
+                let config = rpc_config_from_url(&a.base.url, a.base.pretty, profile);
+                tx::move_call(
+                    &config,
+                    &a.base.signer,
+                    tx::MoveCallArgs {
+                        package: &a.package,
+                        module: &a.module,
+                        function: &a.function,
+                        type_args: &a.type_args,
+                        args_json: &a.args,
+                    },
+                    TxOptions {
+                        gas: a.base.gas.as_deref(),
+                        gas_budget: a.base.gas_budget,
+                        dry_run: a.base.dry_run,
+                    },
+                )
+                .await
+            }
+            T::Split(a) => {
+                let config = rpc_config_from_url(&a.base.url, a.base.pretty, profile);
+                tx::split_coin(
+                    &config,
+                    &a.base.signer,
+                    &a.coin,
+                    &a.amounts,
+                    a.base.gas.as_deref(),
+                    a.base.gas_budget,
+                    a.base.dry_run,
+                )
+                .await
+            }
+            T::SplitEqual(a) => {
+                let config = rpc_config_from_url(&a.base.url, a.base.pretty, profile);
+                tx::split_coin_equal(
+                    &config,
+                    &a.base.signer,
+                    &a.coin,
+                    a.count,
+                    a.base.gas.as_deref(),
+                    a.base.gas_budget,
+                    a.base.dry_run,
+                )
+                .await
+            }
+            T::Merge(a) => {
+                let config = rpc_config_from_url(&a.base.url, a.base.pretty, profile);
+                tx::merge_coins(
+                    &config,
+                    &a.base.signer,
+                    &a.primary,
+                    &a.merge,
+                    a.base.gas.as_deref(),
+                    a.base.gas_budget,
+                    a.base.dry_run,
+                )
+                .await
+            }
+            T::Publish(a) => {
+                let config = rpc_config_from_url(&a.url, a.pretty, profile);
+                tx::publish(
+                    &config,
+                    &a.sender,
+                    &a.modules,
+                    &a.dependencies,
+                    a.gas.as_deref(),
+                    a.gas_budget,
+                    a.dry_run,
+                )
+                .await
+            }
+            T::Submit(a) => {
+                use rpc::methods;
+                let config = rpc_config_from_url(&a.url, a.pretty, profile);
+                let signatures = serde_json::to_string(&a.signatures)?;
+                methods::execute_transaction(&config, &a.tx_bytes, &signatures).await
+            }
+            T::DryRun(a) => {
+                use rpc::methods;
+                let config = rpc_config_from_url(&a.url, a.pretty, profile);
+                methods::dry_run(&config, &a.tx_bytes).await
+            }
+            T::Wait(a) => {
+                let config = rpc_config_from_url(&a.url, a.pretty, profile);
+                tx::wait_for_tx(&config, &a.digest, a.timeout).await
+            }
+        }
+    }
+
+    pub async fn handle_stake(
+        cmd: crate::commands::StakeCommands,
+        profile: Option<&str>,
+    ) -> Result<()> {
+        use crate::commands::StakeCommands as S;
+        use rpc::{
+            methods,
+            tx::{self, TxOptions},
+        };
+
+        match cmd {
+            S::Delegate(a) => {
+                let config = rpc_config_from_url(&a.url, a.pretty, profile);
+                tx::request_add_stake(
+                    &config,
+                    &a.signer,
+                    tx::DelegateArgs {
+                        coins: &a.coins,
+                        amount: a.amount,
+                        validator: &a.validator,
+                    },
+                    TxOptions {
+                        gas: a.gas.as_deref(),
+                        gas_budget: a.gas_budget,
+                        dry_run: a.dry_run,
+                    },
+                )
+                .await
+            }
+            S::Undelegate(a) => {
+                let config = rpc_config_from_url(&a.url, a.pretty, profile);
+                tx::request_withdraw_stake(
+                    &config,
+                    &a.signer,
+                    &a.staked_sui,
+                    TxOptions {
+                        gas: a.gas.as_deref(),
+                        gas_budget: a.gas_budget,
+                        dry_run: a.dry_run,
+                    },
+                )
+                .await
+            }
+            S::Rewards(a) => {
+                methods::get_stakes(&rpc_config_from_url(&a.url, a.pretty, profile), &a.address)
+                    .await
+            }
+        }
+    }
+
+    pub async fn handle_system(
+        cmd: crate::commands::SystemCommands,
+        profile: Option<&str>,
+    ) -> Result<()> {
+        use crate::commands::SystemCommands as S;
+        use rpc::methods;
+
+        match cmd {
+            S::Chain(a) => {
+                methods::get_chain_identifier(&rpc_config_from_url(&a.url, a.pretty, profile)).await
+            }
+            S::GasPrice(a) => {
+                methods::get_reference_gas_price(&rpc_config_from_url(&a.url, a.pretty, profile))
+                    .await
+            }
+            S::Committee(a) => {
+                methods::get_committee_info(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    a.epoch,
+                )
+                .await
+            }
+            S::State(a) => {
+                methods::get_latest_system_state(&rpc_config_from_url(&a.url, a.pretty, profile))
+                    .await
+            }
+            S::Apy(a) => {
+                methods::get_validators_apy(&rpc_config_from_url(&a.url, a.pretty, profile)).await
+            }
+            S::Epoch(a) => {
+                methods::get_current_epoch(&rpc_config_from_url(&a.url, a.pretty, profile)).await
+            }
+            S::Protocol(a) => {
+                methods::get_protocol_config(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    a.version,
+                )
+                .await
+            }
+            S::TotalTxs(a) => {
+                methods::get_total_transactions(&rpc_config_from_url(&a.url, a.pretty, profile))
+                    .await
+            }
+        }
+    }
+
+    pub async fn handle_util(
+        cmd: crate::commands::UtilCommands,
+        profile: Option<&str>,
+    ) -> Result<()> {
+        use crate::commands::UtilCommands as U;
+
+        match cmd {
+            U::DecodeTx(a) => {
+                use fastcrypto::encoding::{Base64, Encoding};
+                let bytes = Base64::decode(&a.tx_bytes)
+                    .map_err(|e| eyre::eyre!("Invalid base64 tx bytes: {}", e))?;
+                let tx_data: sui_types::transaction::TransactionData = bcs::from_bytes(&bytes)
+                    .map_err(|e| eyre::eyre!("Invalid TransactionData: {}", e))?;
+                println!("Digest: {}", tx_data.digest());
+                println!("{tx_data:#?}");
+                Ok(())
+            }
+            U::Address(a) => {
+                if a.long {
+                    println!("{}", a.address);
+                } else {
+                    println!("{}", shorten_address(&a.address));
+                }
+                Ok(())
+            }
+            U::Health(a) => {
+                let rpc_config = rpc_config_from_url(&a.url, false, profile);
+                let started = std::time::Instant::now();
+                let chain = rpc::rpc_call(
+                    &rpc_config.url,
+                    "sui_getChainIdentifier",
+                    serde_json::json!([]),
+                )
+                .await;
+                match chain {
+                    Ok(v) if v.get("result").is_some() => {
+                        println!("JSON-RPC OK ({}ms): {v}", started.elapsed().as_millis())
+                    }
+                    Ok(v) => println!(
+                        "JSON-RPC DEGRADED ({}ms): {v}",
+                        started.elapsed().as_millis()
+                    ),
+                    Err(e) => println!("JSON-RPC FAILED: {e}"),
+                }
+                let grpc_url = a.grpc_url.unwrap_or_else(|| rpc_config.url.clone());
+                let started = std::time::Instant::now();
+                let config = grpc::GrpcConfig {
+                    url: grpc_url.clone(),
+                    pretty: false,
+                    json: true,
+                    timeout: std::time::Duration::from_secs(a.timeout),
+                    headers: vec![],
+                };
+                match grpc::SuiGrpcClient::new(config).await {
+                    Ok(mut client) => match client.test_connection().await {
+                        Ok(true) => {
+                            println!("gRPC OK ({}ms): {grpc_url}", started.elapsed().as_millis())
+                        }
+                        _ => println!("gRPC FAILED: {grpc_url}"),
+                    },
+                    Err(e) => println!("gRPC FAILED: {e}"),
+                }
+                Ok(())
+            }
+            U::Faucet(a) => {
+                let url = a
+                    .url
+                    .unwrap_or_else(|| faucet_url_for_profile(profile).to_string());
+                let client = reqwest::Client::new();
+                let response = client
+                    .post(&url)
+                    .json(&serde_json::json!({"FixedAmountRequest": {"recipient": a.address}}))
+                    .send()
+                    .await
+                    .map_err(|e| eyre::eyre!("Faucet request failed: {}", e))?;
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                if !status.is_success() {
+                    eyre::bail!("Faucet failed ({status}): {text}");
+                }
+                println!("Faucet response: {text}");
+                Ok(())
+            }
+            U::Resolve(a) => {
+                rpc::methods::resolve_name(&rpc_config_from_url(&a.url, a.pretty, profile), &a.name)
+                    .await
+            }
+            U::Reverse(a) => {
+                rpc::methods::reverse_resolve(
+                    &rpc_config_from_url(&a.url, a.pretty, profile),
+                    &a.address,
+                )
+                .await
+            }
+        }
+    }
+
+    pub async fn handle_graphql(args: crate::commands::GraphqlArgs) -> Result<()> {
+        let variables: serde_json::Value = serde_json::from_str(&args.variables)
+            .map_err(|e| eyre::eyre!("Invalid JSON variables: {}", e))?;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(args.timeout))
+            .build()
+            .map_err(|e| eyre::eyre!("{e}"))?;
+        let response = client
+            .post(&args.url)
+            .json(&serde_json::json!({"query": args.query, "variables": variables}))
+            .send()
+            .await
+            .map_err(|e| eyre::eyre!("GraphQL request failed: {}", e))?;
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            eyre::bail!("GraphQL failed ({status}): {text}");
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| eyre::eyre!("Invalid JSON response: {}", e))?;
+        if args.pretty {
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        } else {
+            println!("{value}");
+        }
+        if let Some(errors) = value.get("errors") {
+            eprintln!("GraphQL errors: {errors}");
+        }
+        Ok(())
+    }
+
+    pub fn handle_completion(args: crate::commands::CompletionArgs) -> Result<()> {
+        use clap::CommandFactory;
+        use clap_complete::{Shell, generate};
+
+        let shell: Shell = args.shell.parse().map_err(|e| eyre::eyre!("{e}"))?;
+        let mut cmd = Cli::command();
+        generate(shell, &mut cmd, "suix", &mut std::io::stdout());
+        Ok(())
     }
 }

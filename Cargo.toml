@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["bin/suix", "crates/grpc", "crates/rpc", "crates/vanity"]
+members = [
+    "bin/suix",
+    "crates/grpc",
+    "crates/keystore",
+    "crates/rpc",
+    "crates/vanity",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,18 +21,27 @@ categories = ["command-line-utilities", "cryptography"]
 
 [workspace.dependencies]
 anyhow = "1.0.104"
+bcs = "0.2.1"
 clap = "4.6.7"
+clap_complete = "4.6.11"
 color-eyre = "0.6.5"
+dirs = "7.0.0"
 eyre = "0.6.14"
+fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "076bf5ad8cea140dc7cf5c5861c24a36acdf64ce" }
+futures = "0.3.34"
 grpc = { path = "crates/grpc" }
 hex = "0.4.3"
+keystore = { path = "crates/keystore" }
+move-core-types = { git = "https://github.com/MystenLabs/sui.git", rev = "be15a10386e78f5fa8d6be365a0fd228b22fa0c5" }
 rayon = "1.12.0"
 regex = "1.13.1"
 reqwest = "0.12"
 rpc = { path = "crates/rpc" }
 serde_json = "1.0.151"
+shared-crypto = { git = "https://github.com/MystenLabs/sui.git", rev = "be15a10386e78f5fa8d6be365a0fd228b22fa0c5" }
 sui-keys = { git = "https://github.com/MystenLabs/sui.git", rev = "be15a10386e78f5fa8d6be365a0fd228b22fa0c5" }
 sui-rpc-api = { git = "https://github.com/MystenLabs/sui.git", rev = "be15a10386e78f5fa8d6be365a0fd228b22fa0c5" }
 sui-types = { git = "https://github.com/MystenLabs/sui.git", rev = "be15a10386e78f5fa8d6be365a0fd228b22fa0c5" }
 tokio = "1.52.1"
+tonic = "0.14.6"
 vanity = { path = "crates/vanity" }

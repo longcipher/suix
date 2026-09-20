@@ -7,17 +7,25 @@ This document guides AI agents working in this repository. It is adapted from th
 
 - Rust **workspace** with `[workspace]` in the root `Cargo.toml`.
 - `bin/suix/` is the single CLI binary crate (`suix`).
-- `crates/vanity/`, `crates/rpc/`, `crates/grpc/` are reusable library crates.
+- `crates/vanity/`, `crates/rpc/`, `crates/grpc/`, `crates/keystore/` are
+  reusable library crates.
 - No frontend/web-framework assumptions.
 
 ## Project Overview
 
 Suix is a CLI tool for Sui blockchain operations:
 
-- `vanity` — multi-threaded vanity address generation (hexspeak, hex, regex).
-- `rpc` — Sui JSON-RPC client (generic calls + quick common methods).
-- `grpc` — native Sui gRPC client (`sui-rpc-api`) with raw calls and streaming.
-- `suix` — the binary that wires the above into CLI subcommands via `clap`.
+- `vanity` — multi-threaded vanity address generation (hexspeak, hex, regex,
+  contains, multi-scheme).
+- `rpc` — Sui JSON-RPC client (generic calls, quick methods, `tx` unsigned
+  builders, coin/system/stake queries).
+- `grpc` — native Sui gRPC client (`sui-rpc-api`) with raw calls, real
+  streaming, balances, stakes, simulate, and execute.
+- `keystore` — local key management (generate, import, export, list, sign,
+  multisig).
+- `suix` — the binary that wires the above into CLI subcommands via `clap`
+  (`bin/suix/src/commands/` holds CLI definitions, `bin/suix/src/main.rs`
+  holds handlers).
 
 ## Execution Strategy
 

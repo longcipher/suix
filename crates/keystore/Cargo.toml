@@ -1,5 +1,5 @@
 [package]
-name = "suix"
+name = "keystore"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,23 +9,15 @@ readme.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Sui blockchain CLI: vanity address generation, JSON-RPC, and native gRPC with streaming."
-default-run = "suix"
+description = "Local key management for suix: generate, import, export, list, sign, and multisig helpers."
 
 [dependencies]
 bcs.workspace = true
-clap = { workspace = true, features = ["derive"] }
-clap_complete.workspace = true
-color-eyre.workspace = true
+dirs.workspace = true
 eyre.workspace = true
 fastcrypto.workspace = true
-grpc.workspace = true
 hex.workspace = true
-keystore.workspace = true
-reqwest = { workspace = true, features = ["json"] }
-rpc.workspace = true
-serde_json.workspace = true
+shared-crypto.workspace = true
 sui-keys.workspace = true
 sui-types.workspace = true
 tokio = { workspace = true, features = ["full"] }
-vanity.workspace = true
