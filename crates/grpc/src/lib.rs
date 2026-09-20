@@ -513,7 +513,7 @@ mod tests {
     #[tokio::test]
     async fn test_service_info() {
         let config = GrpcConfig::default();
-        if let Ok(client) = SuiGrpcClient::new(config).await {
+        if let Ok(mut client) = SuiGrpcClient::new(config).await {
             let result = client.get_service_info().await;
             match result {
                 Ok(_) => println!("Service info test passed"),

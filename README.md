@@ -10,7 +10,6 @@ A high-performance, multi-purpose CLI tool for Sui blockchain operations, featur
   - `suix json-rpc-quick` - Quick access to common JSON-RPC methods
   - `suix grpc` - Raw gRPC calls (buf curl-like interface)
   - `suix grpc-quick` - Native gRPC client with real-time streaming
-
 - 🚀 **High Performance**: Multi-threaded vanity address generation using Rayon
 - 🎯 **Flexible Patterns**: Support for hexspeak conversion, hex patterns, and regex
 - 🔐 **Official Sui Integration**: Uses `sui-keys`, `sui-types`, and `sui-rpc-api` for authentic operations

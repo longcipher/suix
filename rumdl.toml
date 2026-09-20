@@ -1,0 +1,9 @@
+# rumdl configuration for Suix.
+# Relaxes rules that do not fit project documentation:
+# - MD013: long lines are expected (URLs, tables, code blocks in README).
+# - MD041: CLAUDE.md is an `@AGENTS.md` include, not a standalone document.
+[MD013]
+enabled = false
+
+[MD041]
+enabled = false

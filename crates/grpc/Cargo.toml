@@ -2,6 +2,14 @@
 name = "grpc"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Native Sui gRPC client (sui-rpc-api) with raw calls and real-time checkpoint streaming."
 
 [dependencies]
 anyhow.workspace = true
