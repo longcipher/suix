@@ -6,10 +6,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme.workspace = true
-homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Local key management for suix: generate, import, export, list, sign, and multisig helpers."
+rust-version.workspace = true
 
 [dependencies]
 bcs.workspace = true
@@ -21,3 +21,7 @@ shared-crypto.workspace = true
 sui-keys.workspace = true
 sui-types.workspace = true
 tokio = { workspace = true, features = ["full"] }
+
+
+[lints]
+workspace = true

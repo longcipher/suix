@@ -38,7 +38,6 @@ lint:
   cargo sort -w -g -c
   cargo fmt --all -- --check
   RUSTC_WRAPPER= cargo clippy --all --all-targets --all-features --locked -- -D warnings
-  cargo shear
   cargo workspace-inheritance-check
   just check-mutation-scope
 
@@ -55,10 +54,6 @@ check-cn:
 # Run clippy with the pedantic, nursery and cargo lint groups
 clippy-all:
   RUSTC_WRAPPER= cargo clippy --all --all-targets --all-features -- -W clippy::pedantic -W clippy::nursery -W clippy::cargo
-
-# Check for unused dependencies
-unused-deps:
-  cargo shear
 
 # ============================================================
 # Tests
@@ -220,7 +215,6 @@ clean:
 # Install all required development tools
 setup:
   cargo install cargo-mutants
-  cargo install cargo-shear
   cargo install cargo-sort
   cargo install cargo-workspace-inheritance-check
   cargo install typos-cli

@@ -6,10 +6,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme.workspace = true
-homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Multi-threaded Sui vanity address generation with hexspeak, hex, and regex pattern matching."
+rust-version.workspace = true
 
 [dependencies]
 eyre = { workspace = true }
@@ -18,3 +18,7 @@ rayon = { workspace = true }
 regex = { workspace = true }
 sui-keys = { workspace = true }
 sui-types = { workspace = true }
+
+
+[lints]
+workspace = true

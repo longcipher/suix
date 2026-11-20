@@ -6,11 +6,11 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme.workspace = true
-homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Sui blockchain CLI: vanity address generation, JSON-RPC, and native gRPC with streaming."
 default-run = "suix"
+rust-version.workspace = true
 
 [dependencies]
 bcs.workspace = true
@@ -29,3 +29,7 @@ sui-keys.workspace = true
 sui-types.workspace = true
 tokio = { workspace = true, features = ["full"] }
 vanity.workspace = true
+
+
+[lints]
+workspace = true

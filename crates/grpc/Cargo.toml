@@ -6,10 +6,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme.workspace = true
-homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Native Sui gRPC client (sui-rpc-api) with raw calls and real-time checkpoint streaming."
+rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
@@ -22,3 +22,7 @@ sui-rpc-api.workspace = true
 sui-types.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tonic.workspace = true
+
+
+[lints]
+workspace = true

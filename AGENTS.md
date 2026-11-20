@@ -40,15 +40,21 @@ temp file and run `cargo mutants --in-diff <diff-file>` for that file only, with
 60 mutants / 300 s. Never add a whole-repo mutation recipe: `just check-mutation-scope` fails
 `just lint` when an unbounded mutation command appears in a build or CI file.
 
-This repo has no CI workflow, so `just lint` is the gate: typos, rumdl, `taplo fmt --check`, `cargo sort -c`, `cargo fmt --check`, `cargo clippy -D warnings`, `cargo shear`, workspace-inheritance check. Run `just setup` once to install the tools it needs. Every test is an in-crate `#[cfg(test)]` module; there is no database or network fixture.
+This repo has no CI workflow, so `just lint` is the gate: typos, rumdl, `taplo fmt --check`, `cargo sort -c`, `cargo fmt --check`, `cargo clippy -D warnings`, Cargo's native `unused_dependencies` lint, workspace-inheritance check. Run `just setup` once to install the tools it needs. Every test is an in-crate `#[cfg(test)]` module; there is no database or network fixture.
 
 ## Rust rules
 
 - Toolchain is pinned to stable `1.96.1` in `rust-toolchain.toml`; the Justfile uses plain `cargo fmt` / `cargo clippy`. Do not introduce `+nightly` or `+1.96.1` variants.
 - The `sui-*` git dependencies (`sui-keys`, `sui-types`, `sui-rpc-api`, `move-core-types`, `shared-crypto`) come from `MystenLabs/sui` and must all pin the SAME `rev` — two revs compile two copies of `sui-types` and produce "expected `sui_types::…`, found `sui_types::…`" mismatches. `fastcrypto` is a separate git dep with its own rev; do not fold it into the Sui rev.
 - Never hand-type dependency versions. Shared deps live in root `[workspace.dependencies]` and are referenced with `dep.workspace = true`; add them with `cargo add <crate> --workspace` and enable features in the member crate.
-- Members inherit `version`/`edition`/`license`/`repository`/`authors`/`readme`/`homepage`/`keywords`/`categories` via `workspace = true`; `cargo workspace-inheritance-check` is part of `just lint` and `just fix` fixes the failures.
-- This workspace defines NO `[workspace.lints]` set, so clippy runs with default lints only. Do not assume `unwrap`/`expect`/`println!` are denied — but keep them out of library code anyway.
+- Members inherit `version`/`edition`/`license`/`repository`/`authors`/`readme`/`keywords`/`categories` via `workspace = true`; `cargo workspace-inheritance-check` is part of `just lint` and `just fix` fixes the failures.
+- This workspace sets `[workspace.lints.rust]` and `[workspace.lints.cargo]` only, so clippy runs with default lints. Do not assume `unwrap`/`expect`/`println!` are denied — but keep them out of library code anyway.
+
+## Rust 1.100 baseline
+
+- Workspace MSRV is Rust 1.100. Prefer newly stabilized features and APIs over older workarounds; do not add feature gates for anything already stable in 1.100.
+- `[workspace.lints.cargo]` enables Cargo's native `unused_dependencies` lint, the only unused-dependency check; do not reintroduce a third-party checker. Its level is `warn`, and `.cargo/config.toml` sets `build.warnings = "deny"`, so a finding fails the gate.
+- `.cargo/config.toml` sets resolver `incompatible-rust-versions = "fallback"` (MSRV-aligned resolution) and `registry.global-min-publish-age = "5 days"` (Rust 1.100 dependency cooldown); keep both.
 
 ## Dependency choices
 

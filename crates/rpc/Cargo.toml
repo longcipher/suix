@@ -6,13 +6,17 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 readme.workspace = true
-homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Sui JSON-RPC client for direct fullnode calls and common quick-access methods."
+rust-version.workspace = true
 
 [dependencies]
 eyre.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+
+[lints]
+workspace = true
